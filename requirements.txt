@@ -1,0 +1,8 @@
+SimpleITK
+numpy
+scikit-image
+pyyaml
+wholeslidedata
+albumentations
+segmentation-models-pytorch
+tqdm
