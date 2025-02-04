@@ -53,6 +53,7 @@ echo "=+= Doing a forward pass"
 # '--volume <NAME>:/tmp'
 #   is added because on Grand Challenge this directory cannot be used to store permanent files
 docker volume create "$DOCKER_NOOP_VOLUME" > /dev/null
+
 docker run --rm \
     --platform=linux/amd64 \
     --volume "$INPUT_DIR":/input:ro \
