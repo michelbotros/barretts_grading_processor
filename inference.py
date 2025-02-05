@@ -27,18 +27,17 @@ import torch
 from preprocessing import get_preprocessing
 from load_models import Ensemble
 import segmentation_models_pytorch as smp
-from tqdm import tqdm
 from wholeslidedata.interoperability.asap.imagewriter import WholeSlideMonochromeMaskWriter
 
-INPUT_PATH = Path("/input")
-OUTPUT_PATH = Path("/output")
+INPUT_PATH = Path('/input/images/he-staining')
+OUTPUT_PATH = Path('/output/images/barretts-esophagus-dysplasia-heatmap')
 RESOURCE_PATH = Path("resources")
+DOWNSAMPLING_FACTOR = 4
 
 
 def run():
 
     # start with setting the device
-
     print("=+=" * 10)
     _show_torch_cuda_info()
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -60,7 +59,12 @@ def run():
     # Extract rois from the image
     rois, bboxes = extract_rois_slide(wsi_in, min_size=50*10**6)
     print('Starting dysplasia segmentation algorithm'.format(len(rois)))
-    print('Found {} ROIs'.format(len(rois)))
+    print('Left with {} ROIs'.format(len(rois)))
+
+    for roi, bb in zip(rois, bboxes):
+        print(roi.shape)
+        print(bb)
+        print()
 
     # Create empty mask equal to the size of the image
     shape_1mpp = wsi_in.shapes[2]
@@ -68,7 +72,7 @@ def run():
     input_spacing = wsi_in.spacings[0]
     print("input_spacing: {}".format(input_spacing))
     output = np.zeros(shape_1mpp, dtype=np.float64)
-    output_spacing = input_spacing * 4
+    output_spacing = input_spacing * DOWNSAMPLING_FACTOR
 
     # settings originally: tile_size=512, step_size=256
     tile_size = 512
@@ -95,16 +99,16 @@ def run():
         print('Segmentation shape: {}'.format(y_hat_dys.shape))
 
         # put the one roi in at the right place
-        bb = bb // 4
+        bb = bb // DOWNSAMPLING_FACTOR
         x_0, y_0, x_1, y_1 = bb
-        # print('Bounding box: {}'.format(bb))
-        output[y_0:y_1, x_0: x_1] = y_hat_dys
+        print('Bounding box: {}'.format(bb))
+        output[x_0:x_1, y_0: y_1] = y_hat_dys.T
 
     print('Segmentation finished')
     print("=+=" * 10)
     # write to output tiff
-    outfile = OUTPUT_PATH / "images" / "output.tif"
-    write_array_as_tif_file(location=outfile, array=output, output_spacing=output_spacing)
+    outfile = OUTPUT_PATH / "output.tif"
+    write_array_as_tif_file(output_file=outfile, output=output, output_spacing=output_spacing)
 
     # check output
     wsi_out = WholeSlideImage(path=outfile, backend='openslide')
@@ -119,37 +123,38 @@ def run():
     return 0
 
 
-def write_array_as_tif_file(*, location, array, output_spacing):
+def write_array_as_tif_file(*, output_file, output, output_spacing):
     """
     """
-    dimensions = array.shape
+    dimensions = output.shape
     tile_size = 512
+    written = False
 
     # create writers
-    print("Setting up writers")
+    print("Setting up writers, writing to: {}".format(output_file))
     segmentation_writer = WholeSlideMonochromeMaskWriter()
-    segmentation_writer.write(path=location,
+    segmentation_writer.write(path=output_file,
                               spacing=output_spacing,
-                              dimensions=array.shape,
+                              dimensions=dimensions,
                               tile_shape=(tile_size, tile_size))
 
     print("Writing image...")
-    # loop over image and get tiles To-Do: do with Generator
-    for y in tqdm(range(0, dimensions[1], tile_size)):
+    for y in range(0, dimensions[1], tile_size):
         for x in range(0, dimensions[0], tile_size):
 
-            # Extract the tile, handling edge cases where the tile goes beyond the image boundaries
-            tile = np.zeros((tile_size, tile_size), dtype=array.dtype)
-            tile_x_end = min(x + tile_size, dimensions[0])
-            tile_y_end = min(y + tile_size, dimensions[1])
+            # get the tile, put onto 0-255 scale
+            tile = output[x: x + tile_size, y: y + tile_size] * 255
 
-            # Copy over the valid region
-            tile[: tile_x_end - x, : tile_y_end - y] = array[x:tile_x_end, y:tile_y_end] * 255
-            print('Tile range: {}{}'.format(np.min(tile), np.max(tile)))
+            # skip the last non-fitting tile
+            if tile.shape == (tile_size, tile_size):
+                segmentation_writer.write_tile(tile, coordinates=(int(x), int(y)))
+                written = True
 
-            # Write the tile using segmentation_writer
-            segmentation_writer.write_tile(tile, coordinates=(int(x), int(y)))
-    print()
+    if not written:
+        raise ValueError(f"No values have been written to {output_file}")
+
+    print('Closing')
+    segmentation_writer.save()
     print('Writing finished')
 
 
@@ -190,7 +195,7 @@ def extract_rois_slide(wsi, min_size=100*10**6, spacing=1.0):
     image_pil = Image.fromarray(slide_8)
     image_gray = np.array(image_pil.convert('L'))
     segmentation = np.where(image_gray < 240, 255, 0)
-    bboxes = np.array(mask_to_bbox(segmentation)) * 8 * 4  # at 0.25 spacing
+    bboxes = np.array(mask_to_bbox(segmentation)) * 8 * DOWNSAMPLING_FACTOR  # at 0.25 spacing
     bboxes_filtered = []
 
     rois = []
@@ -207,7 +212,7 @@ def extract_rois_slide(wsi, min_size=100*10**6, spacing=1.0):
         width, height = int(diff[0]), int(diff[1])
 
         # extract roi
-        roi = wsi.get_patch(x, y, width // 4, height // 4, spacing=spacing)
+        roi = wsi.get_patch(x, y, width // DOWNSAMPLING_FACTOR, height // DOWNSAMPLING_FACTOR, spacing=spacing)
 
         # discard if too small
         if roi.size > min_size:
@@ -278,7 +283,7 @@ def extract_segmentation(model, generator, preprocessing, device, n_classes=4):
     generator = generator.get_generator()
 
     with torch.no_grad():
-        for idx, (x_np, loc) in enumerate(tqdm(generator)):
+        for idx, (x_np, loc) in enumerate(generator):
 
             # get location
             x_coord, y_coord = loc

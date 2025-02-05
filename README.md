@@ -20,10 +20,10 @@ If the documentation does not answer your question, feel free to reach out to us
 The examples in this template illustrate one approach, but they are not the only option. Any container image will do as long as it:
 
 
-- reads from the `/input/`
+- reads from the `/input/images/he-staining`
 
 
-- outputs, correctly, to `/output/images`
+- outputs, correctly, to `/output/images/barretts-esophagus-dysplasia-heatmap`
 
 
 ---

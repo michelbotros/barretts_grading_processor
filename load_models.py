@@ -54,7 +54,7 @@ def load_segmentation_model(train_config, activation=None):
     if train_config['segmentation_model'] == 'unet++':
         model = smp.UnetPlusPlus(
             encoder_name=train_config['encoder_name'],
-            encoder_weights=train_config['encoder_weights'],
+            encoder_weights=None,
             in_channels=train_config['n_channels'],
             classes=train_config['n_classes'],
             activation=activation
@@ -62,7 +62,7 @@ def load_segmentation_model(train_config, activation=None):
     elif train_config['segmentation_model'] == 'deeplabv3+':
         model = smp.DeepLabV3Plus(
             encoder_name=train_config['encoder_name'],
-            encoder_weights=train_config['encoder_weights'],
+            encoder_weights=None,
             in_channels=train_config['n_channels'],
             classes=train_config['n_classes'],
             activation=activation
@@ -70,7 +70,7 @@ def load_segmentation_model(train_config, activation=None):
     else:
         model = smp.Unet(
             encoder_name=train_config['encoder_name'],
-            encoder_weights=train_config['encoder_weights'],
+            encoder_weights=None,
             in_channels=train_config['n_channels'],
             classes=train_config['n_classes'],
             activation=activation
