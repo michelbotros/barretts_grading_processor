@@ -20,12 +20,19 @@ It contains the following:
   * (4) writes the output to a heatmap tiff file (0-255) to display dysplastic regions
 * Script for loading the models (`load_models.py`)
 * The model weights (`resources/`)
-  
+
+### I/O
+Uses the [whole-slide-data](https://github.com/DIAGNijmegen/pathology-whole-slide-data) package for reading and writing.
 - reads from the `/input/images/he-staining`
 - outputs to `/output/images/barretts-esophagus-dysplasia-heatmap`
+  
 ---
 ### To-do:
-* Smoothen output
-* Check roster like output structure
-  * artefact from writing? converting to 0-255 uint8
+* (1) smoothen output: decrease the step size but requires speed up (see 3) 
+* (2) fix roster like output structure
+  * artefact from writing? converting to 0-255 range with dtype UInt8?
   * check if possible to replicate w numpy and matplotlib
+* (3) Optimize speed
+  * optimize extract_segmentation(): make better gpu memory
+  * better ROI detection or select less ROIs
+    
