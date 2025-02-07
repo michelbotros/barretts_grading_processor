@@ -84,7 +84,7 @@ def load_model(model_path, train_config, device=None):
 
     """
     model = load_segmentation_model(train_config, activation=None)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.to(device)
     model.eval()
     print('Loading model from: {}'.format(model_path))

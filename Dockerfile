@@ -45,8 +45,12 @@ COPY requirements.txt /opt/app/
 RUN pip install --no-cache-dir -r /opt/app/requirements.txt
 RUN pip install --no-cache-dir git+https://github.com/DIAGNijmegen/pathology-whole-slide-data@main
 
+
 # Create a non-root user
 RUN groupadd -r user && useradd -m --no-log-init -r -g user user
+RUN mkdir -p /output/images/barretts-esophagus-dysplasia-heatmap && \
+    chown -R user:user /output
+
 USER user
 
 # Copy the rest of the application files

@@ -17,6 +17,8 @@ Any container that shows the same behavior will do, this is purely an example of
 
 Happy programming!
 """
+import os
+os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
 from pathlib import Path
 from glob import glob
 import numpy as np
@@ -33,16 +35,19 @@ INPUT_PATH = Path('/input/images/he-staining')
 OUTPUT_PATH = Path('/output/images/barretts-esophagus-dysplasia-heatmap')
 RESOURCE_PATH = Path("resources")
 DOWNSAMPLING_FACTOR = 4
+TILE_SIZE = 512
+STEP_SIZE = 256 // 2
 
 
 def run():
-
     # start with setting the device
     print("=+=" * 10)
     _show_torch_cuda_info()
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print('Using device: {}'.format(device))
     print("=+=" * 10)
+
+    verify_output_folder()
 
     # read wsi from input path
     wsi_in = load_image(
@@ -56,15 +61,11 @@ def run():
     print(f'shapes:  {wsi_in.shapes}')
     print(f'downsamplings: {wsi_in.downsamplings}')
     print("=+=" * 10)
+
     # Extract rois from the image
-    rois, bboxes = extract_rois_slide(wsi_in, min_size=50*10**6)
+    rois, bboxes = extract_rois_slide(wsi_in, min_size=50 * 10 ** 6)
     print('Starting dysplasia segmentation algorithm'.format(len(rois)))
     print('Left with {} ROIs'.format(len(rois)))
-
-    for roi, bb in zip(rois, bboxes):
-        print(roi.shape)
-        print(bb)
-        print()
 
     # Create empty mask equal to the size of the image
     shape_1mpp = wsi_in.shapes[2]
@@ -73,10 +74,6 @@ def run():
     print("input_spacing: {}".format(input_spacing))
     output = np.zeros(shape_1mpp, dtype=np.float64)
     output_spacing = input_spacing * DOWNSAMPLING_FACTOR
-
-    # settings originally: tile_size=512, step_size=256
-    tile_size = 512
-    step_size = 256
 
     # load the models
     exp_dir = 'resources/Ensemble_m5_UNet++_CE_IN/'
@@ -87,14 +84,14 @@ def run():
 
     # loop over the rois
     for i, (roi, bb) in enumerate(zip(rois, bboxes)):
-
         # get the dysplasia heatmap
         print('Segmenting ROI {} with shape: {}'.format(i + 1, roi.shape))
-        tile_gen = TileGenerator(image=roi, step_size=step_size, tile_size=tile_size)
+        tile_gen = TileGenerator(image=roi, step_size=STEP_SIZE, tile_size=TILE_SIZE)
         segmentation, counts = extract_segmentation(model=ensemble_m5_CE_IN,
                                                     generator=tile_gen,
                                                     preprocessing=preprocessing,
                                                     device=device)
+
         y_hat_dys = segmentation[:, :, 2] + segmentation[:, :, 3]
         print('Segmentation shape: {}'.format(y_hat_dys.shape))
 
@@ -123,31 +120,45 @@ def run():
     return 0
 
 
+def verify_output_folder():
+
+    # Check if the directory exists
+    if not os.path.exists(OUTPUT_PATH):
+        try:
+            os.makedirs(OUTPUT_PATH)
+            print(f"Directory created: {OUTPUT_PATH}")
+        except PermissionError:
+            print(f"Permission denied: Cannot create directory at {OUTPUT_PATH}")
+    else:
+        print(f"Directory already exists: {OUTPUT_PATH}")
+
+    return 0
+
+
 def write_array_as_tif_file(*, output_file, output, output_spacing):
     """
     """
     dimensions = output.shape
-    tile_size = 512
     written = False
 
     # create writers
     print("Setting up writers, writing to: {}".format(output_file))
     segmentation_writer = WholeSlideMonochromeMaskWriter()
-    segmentation_writer.write(path=output_file,
+    segmentation_writer.write(path=Path(output_file),
                               spacing=output_spacing,
                               dimensions=dimensions,
-                              tile_shape=(tile_size, tile_size))
+                              tile_shape=(TILE_SIZE, TILE_SIZE))
 
     print("Writing image...")
-    for y in range(0, dimensions[1], tile_size):
-        for x in range(0, dimensions[0], tile_size):
+    for y in range(0, dimensions[1], TILE_SIZE):
+        for x in range(0, dimensions[0], TILE_SIZE):
 
             # get the tile, put onto 0-255 scale
-            tile = output[x: x + tile_size, y: y + tile_size] * 255
+            tile = output[x: x + TILE_SIZE, y: y + TILE_SIZE] * 255
 
             # skip the last non-fitting tile
-            if tile.shape == (tile_size, tile_size):
-                segmentation_writer.write_tile(tile, coordinates=(int(x), int(y)))
+            if tile.shape == (TILE_SIZE, TILE_SIZE):
+                segmentation_writer.write_tile(tile.T, coordinates=(int(x), int(y)))
                 written = True
 
     if not written:
@@ -159,11 +170,10 @@ def write_array_as_tif_file(*, output_file, output, output_spacing):
 
 
 def load_image(*, location):
-
     # Use wholeslidedata to read a file
     input_files = (
-        glob(str(location / "*.tif"))
-        + glob(str(location / "*.tiff"))
+            glob(str(location / "*.tif"))
+            + glob(str(location / "*.tiff"))
     )
     # open the WSI
     wsi = WholeSlideImage(input_files[0], backend='openslide')
@@ -174,20 +184,18 @@ def mask_to_bbox(mask):
     bboxes = []
     lbl = label(mask)
     props = regionprops(lbl)
+
     for prop in props:
         x1 = prop.bbox[1]
         y1 = prop.bbox[0]
-
         x2 = prop.bbox[3]
         y2 = prop.bbox[2]
-
         bboxes.append([x1, y1, x2, y2])
 
     return bboxes
 
 
-def extract_rois_slide(wsi, min_size=100*10**6, spacing=1.0):
-
+def extract_rois_slide(wsi, min_size=100 * 10 ** 6, spacing=1.0):
     # open slide at spacing 8.0
     slide_8 = wsi.get_slide(spacing=8.0)
 
@@ -230,7 +238,7 @@ def _show_torch_cuda_info():
     print(f"Torch CUDA is available: {(available := torch.cuda.is_available())}")
     if available:
         print(f"\tnumber of devices: {torch.cuda.device_count()}")
-        print(f"\tcurrent device: { (current_device := torch.cuda.current_device())}")
+        print(f"\tcurrent device: {(current_device := torch.cuda.current_device())}")
         print(f"\tproperties: {torch.cuda.get_device_properties(current_device)}")
 
 
@@ -284,7 +292,6 @@ def extract_segmentation(model, generator, preprocessing, device, n_classes=4):
 
     with torch.no_grad():
         for idx, (x_np, loc) in enumerate(generator):
-
             # get location
             x_coord, y_coord = loc
 
